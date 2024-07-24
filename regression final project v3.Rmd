@@ -1,0 +1,361 @@
+---
+title: "Regression Final Assignment v3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r warning=FALSE, message=FALSE}
+library(TSA)
+library(readr)
+library(tidyr)
+library(stringr)
+library(dplyr)
+library(lubridate)
+library(ggcorrplot)
+library(gclus)
+library(lmtest)
+library(leaps)
+library(MASS)
+library(car)
+library(ggplot2)
+library(scales)
+library(knitr)
+library(gridExtra)
+library(fastDummies)
+
+```
+
+
+```{r message=FALSE, warning=FALSE}
+data <- read_csv("Australian Vehicle Prices.csv")
+```
+
+
+
+## Data Preprocessing
+
+```{r}
+
+data <- na.omit(data) # removing rows with missing values 
+data<- subset(data, grepl(", VIC", Location)) # filter vehicle data to Victoria State
+data <- subset(data, !grepl("-", ColourExtInt)) # Remove rows with incomplete data unique(data$ExteriorColor)
+
+# keep only exterior color 
+data$ExteriorColor <- sapply(strsplit(data$ColourExtInt, " / "), `[`, 1)
+
+# Rename the column
+colnames(data)[colnames(data) == "FuelConsumption"] <- "FuelConsumption_Lper100km"
+
+# Extract numerical values before "L" and convert to numeric
+data$FuelConsumption_Lper100km <- as.numeric(sub(" L /.*", "", data$FuelConsumption_Lper100km)) 
+
+#data$CylindersinEngine <- as.numeric(sub(" cyl /.*", "", data$CylindersinEngine))
+
+data$Engine_size_L <- as.numeric(sub(".*?, (\\d+\\.?\\d*) L", "\\1", data$Engine))
+
+data <- na.omit(data) # removing rows with missing values
+
+#changing data types
+data$Doors <- as.numeric(sub("(\\d+) Doors", "\\1", data$Doors))
+data$Seats <- as.numeric(sub("(\\d+) Seats", "\\1", data$Seats))
+data$CylindersinEngine <- as.numeric(sub("(\\d+) cyl", "\\1", data$CylindersinEngine))
+data$Brand <- as.factor(data$Brand)
+data$UsedOrNew <- as.factor(data$UsedOrNew)
+data$Transmission <- as.factor(data$Transmission)
+data$DriveType <- as.factor(data$DriveType)
+data$FuelType <- as.factor(data$FuelType)
+data$Kilometres <- as.numeric(data$Kilometres)
+data$BodyType <- as.factor(data$BodyType)
+data$ExteriorColor <- as.factor(data$ExteriorColor)
+
+
+
+data$Kilometres[data$Kilometres == "-"] <- 0
+data <- data[data$FuelType != "-", ]
+data <- data[data$Transmission != "-", ]
+data <- na.omit(data) # removing rows with missing values
+data <- data[, !(names(data) %in% c("ColourExtInt", "Car/Suv","Title","Model","Location","Engine"))]
+
+```
+
+
+```{r}
+p1 <- ggplot(data, aes(x=Year)) + geom_histogram(binwidth=1, fill='blue', color='black') + ggtitle('Year')
+p2 <- ggplot(data, aes(x=Kilometres)) + geom_histogram(binwidth=50000, fill='blue', color='black') + ggtitle('Kilometres Driven') + scale_x_continuous(labels = comma)
+p3 <- ggplot(data, aes(x=FuelConsumption_Lper100km)) + geom_histogram(binwidth=0.5, fill='blue', color='black') + ggtitle('Fuel Consumption (L/100km)')
+p4 <- ggplot(data, aes(x=Price)) + geom_histogram(binwidth=10000, fill='blue', color='black') + ggtitle('Price') +
+  scale_x_continuous(labels = comma)
+p5 <- ggplot(data, aes(x=Engine_size_L)) + geom_histogram(binwidth=0.5, fill='blue', color='black') + ggtitle('Engine Size (L)')
+p6 <- ggplot(data, aes(x=Seats)) + geom_histogram(binwidth=1, fill='blue', color='black') + ggtitle('Seats')
+p7 <- ggplot(data, aes(x=FuelType)) + geom_bar(fill='blue', color='black') + ggtitle('Fuel Type') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+p8 <- ggplot(data, aes(x=Transmission)) + geom_bar(fill='blue', color='black') + ggtitle('Transmission')
+p9 <- ggplot(data, aes(x=DriveType)) + geom_bar(fill='blue', color='black') + ggtitle('Drive Type')
+
+grid.arrange(p1, p2, p3, ncol=3)
+grid.arrange(p4, p5, p6, ncol=3)
+grid.arrange( p7, p8, p9, ncol=3)
+```
+
+
+```{r}
+p_brand <- ggplot(data, aes(x=Brand)) + 
+  geom_bar(fill='blue', color='black') + 
+  ggtitle('Brand') +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+print(p_brand)
+```
+
+
+```{r}
+data$Ageofcar <- 2024 - data$Year
+
+p_age <- ggplot(data, aes(x=Ageofcar)) + 
+  geom_histogram(binwidth=1, fill='blue', color='black') + 
+  ggtitle('Age of Car')
+
+print(p_age)
+```
+
+
+```{r}
+# Select numeric columns for correlation
+numeric_columns <- sapply(data, is.numeric)
+correlation_matrix <- cor(data[, numeric_columns], use = "complete.obs")
+ggcorrplot(correlation_matrix, 
+           method = "square", 
+           type = "lower", 
+           lab = TRUE, 
+           lab_size = 3, 
+           colors = c("navy", "white", "maroon"), 
+           title = "Correlation Matrix", 
+           ggtheme = theme_minimal())
+```
+
+
+
+```{r}
+ggplot(data, aes(y=Brand, x=Price)) +
+  geom_boxplot(fill='maroon', color='black') +
+  ggtitle('Price Distribution by Brand') +
+  xlab('Brand') +
+  ylab('Price') + 
+  scale_x_continuous(labels = comma)+
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+ggplot(data, aes(y=BodyType, x=Price)) +
+  geom_boxplot(fill='darkorange', color='black') +
+  ggtitle('Price Distribution by BodyType') +
+  xlab('BodyType') +
+  ylab('Price') + 
+  scale_x_continuous(labels = comma)+
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+
+ggplot(data, aes(y=ExteriorColor, x=Price)) +
+  geom_boxplot(fill='darkgreen', color='black') +
+  ggtitle('Price Distribution by ExteriorColor') +
+  xlab('Color') +
+  ylab('Price') + 
+  scale_x_continuous(labels = comma)+
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+```
+
+
+```{r}
+p2 <- ggplot(data, aes(x=Year, y=Price, color=Transmission, group=Transmission)) +
+  geom_line() +
+  
+  ggtitle('Price vs. Manufacturing Year by Fuel Type') +
+  xlab('Year') +
+  ylab('Price') +
+  theme_minimal()
+p2
+
+agg_data <- data %>%
+  group_by(Year,CylindersinEngine) %>%
+  summarise(AveragePrice = mean(Price, na.rm = TRUE))
+
+# Line Plot for Average Price vs. Manufacturing Year by Fuel Type
+ggplot(agg_data, aes(x=Year, y=AveragePrice, color=CylindersinEngine, group=CylindersinEngine)) +
+  geom_line() +
+  geom_point() +
+  ggtitle('Average Price vs. Manufacturing Year by Fuel Type') +
+  xlab('Year') +
+  ylab('Average Price') +
+  theme_minimal()
+
+```
+
+
+```{r}
+
+df_one_hot <- dummy_cols(data, select_columns = c("UsedOrNew", "FuelType", "DriveType"), remove_first_dummy = FALSE, remove_selected_columns = TRUE)
+#df_one_hot <- dummy_cols(data, select_columns = "Transmission", remove_first_dummy = TRUE, remove_selected_columns = TRUE)
+# Print the result
+print(df_one_hot)
+
+library(data.table)
+setDT(data)
+
+# Target encoding for Brand
+brand_encoding <- data[, .(Brand_mean = mean(Price)), by = Brand]
+df <- merge(data, brand_encoding, by = "Brand", all.x = TRUE)
+
+# Target encoding for BodyType
+bodytype_encoding <- data[, .(BodyType_mean = mean(Price)), by = BodyType]
+df <- merge(df, bodytype_encoding, by = "BodyType", all.x = TRUE)
+
+# Target encoding for ExteriorColor
+exteriorcolor_encoding <- data[, .(ExteriorColor_mean = mean(Price)), by = ExteriorColor]
+df <- merge(df, exteriorcolor_encoding, by = "ExteriorColor", all.x = TRUE)
+
+```
+
+
+
+```{r}
+
+# One-hot encoding
+one_hot <- dummy_cols(data, select_columns = c("UsedOrNew", "FuelType", "DriveType"), remove_first_dummy = FALSE, remove_selected_columns = TRUE)
+
+# Target encoding for Brand
+brand_encoding <- data[, .(Brand_mean = mean(Price)), by = Brand]
+one_hot <- merge(one_hot, brand_encoding, by = "Brand", all.x = TRUE)
+
+# Target encoding for BodyType
+bodytype_encoding <- data[, .(BodyType_mean = mean(Price)), by = BodyType]
+one_hot <- merge(one_hot, bodytype_encoding, by = "BodyType", all.x = TRUE)
+
+# Target encoding for ExteriorColor
+exteriorcolor_encoding <- data[, .(ExteriorColor_mean = mean(Price)), by = ExteriorColor]
+one_hot <- merge(one_hot, exteriorcolor_encoding, by = "ExteriorColor", all.x = TRUE)
+
+# Print the result
+print(one_hot)
+
+# If you want to convert Transmission to factor, you can do it directly
+one_hot$Transmission <- as.factor(one_hot$Transmission)
+
+one_hot_df <- as.data.frame(one_hot)
+
+
+final_df <- subset(one_hot_df, select = -c(ExteriorColor, BodyType, Brand))
+
+```
+
+
+# Analysis
+
+```{r}
+# Fit the full linear regression model
+model <- lm(Price ~ Year + Transmission + FuelConsumption_Lper100km + Kilometres + CylindersinEngine+ Doors + Seats + Engine_size_L + Ageofcar + UsedOrNew_DEMO + UsedOrNew_NEW + 
+            UsedOrNew_USED + `FuelType_-` + FuelType_Diesel + FuelType_Hybrid + FuelType_LPG + 
+            FuelType_Premium + FuelType_Unleaded + DriveType_4WD + DriveType_AWD + DriveType_Front + 
+            DriveType_Rear + Brand_mean + BodyType_mean + ExteriorColor_mean, data = final_df)
+
+```
+
+
+```{r}
+summary(model)
+```
+```{r}
+anova(lm(Price ~ Year + Transmission + FuelConsumption_Lper100km + Kilometres + CylindersinEngine+ Doors + Seats + Engine_size_L + Ageofcar + UsedOrNew_DEMO + UsedOrNew_NEW + 
+            UsedOrNew_USED + `FuelType_-` + FuelType_Diesel + FuelType_Hybrid + FuelType_LPG + 
+            FuelType_Premium + FuelType_Unleaded + DriveType_4WD + DriveType_AWD + DriveType_Front + 
+            DriveType_Rear + Brand_mean + BodyType_mean + ExteriorColor_mean, data = final_df))
+
+# Overall fit of the model
+rsq <- summary(model)$r.squared
+adj_rsq <- summary(model)$adj.r.squared
+
+# Significance of each regressor
+coefficients <- summary(model)$coefficients
+
+# Display R-squared values and coefficients
+cat("R-squared:", rsq, "\n")
+cat("Adjusted R-squared:", adj_rsq, "\n")
+print(coefficients)
+```
+
+```{r}
+# Perform All Possible Subsets regression
+all_subsets <- regsubsets(Price ~ Year + Transmission + FuelConsumption_Lper100km + Kilometres + CylindersinEngine+ Doors + Seats + Engine_size_L + Ageofcar + UsedOrNew_DEMO + UsedOrNew_NEW + 
+            UsedOrNew_USED + `FuelType_-` + FuelType_Diesel + FuelType_Hybrid + FuelType_LPG + 
+            FuelType_Premium + FuelType_Unleaded + DriveType_4WD + DriveType_AWD + DriveType_Front + 
+            DriveType_Rear + Brand_mean + BodyType_mean + ExteriorColor_mean, data = final_df, nbest = 1, really.big = TRUE)
+
+# Summarizing the results
+subset_summary <- summary(all_subsets)
+
+# Accessing the matrix that shows which variables are included
+model_matrix <- subset_summary$which
+
+# Printing the matrix to see which variables are included in each subset
+print(model_matrix)
+
+# Extracting Mallows' Cp, Adjusted R-squared, and BIC from the summary
+mallows_cp <- subset_summary$cp
+adj_r2 <- subset_summary$adjr2
+bic <- subset_summary$bic
+
+# Printing Mallows' Cp for each model
+print(mallows_cp)
+
+# Printing the results for Adjusted R-squared and BIC
+print(adj_r2)  
+print(bic)
+
+
+```
+
+```{r}
+
+# Set up the plot area with larger dimensions
+par(mfrow = c(1, 1), mar = c(5, 6, 4, 2) + 0.1, cex = 1.2)
+
+# Cp plot
+plot(all_subsets, scale = "Cp", main = "Cp Plot")
+
+# BIC plot
+plot(all_subsets, scale = "bic", main = "BIC Plot")
+
+# Adjusted R-squared plot
+plot(all_subsets, scale = "adjr2", main = "Adjusted R-squared Plot")
+
+# Reset plotting layout
+par(mfrow = c(1, 1))
+```
+
+
+
+```{r}
+# Fit the selected model
+model_sub <- lm(Price ~ Year + Transmission + FuelConsumption_Lper100km + Kilometres + CylindersinEngine+ Doors + Seats + Engine_size_L + Ageofcar + UsedOrNew_DEMO + UsedOrNew_NEW + 
+            UsedOrNew_USED + `FuelType_-` + FuelType_Diesel + FuelType_Hybrid + FuelType_LPG + 
+            FuelType_Premium + FuelType_Unleaded + DriveType_4WD + DriveType_AWD + DriveType_Front + 
+            DriveType_Rear + Brand_mean + BodyType_mean + ExteriorColor_mean, data = final_df)
+
+# Set up the plot area with larger dimensions and adjust margins
+par(mfrow = c(1, 1), mar = c(5, 6, 4, 2) + 0.1, cex = 1.2)
+
+# Residuals vs Fitted Plot
+plot(model_sub, which = 1, main = "Residuals vs Fitted")
+
+# Normal Q-Q Plot
+plot(model_sub, which = 2, main = "Normal Q-Q")
+
+# Scale-Location Plot
+plot(model_sub, which = 3, main = "Scale-Location")
+
+# Residuals vs Leverage Plot
+plot(model_sub, which = 5, main = "Residuals vs Leverage")
+```
+
